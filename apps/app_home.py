@@ -8,7 +8,6 @@ import win32com
 from datetime import datetime
 import json
 import requests
-import threading
 from waitress import serve
 from paste.translogger import TransLogger
 
@@ -19,11 +18,11 @@ from iress import Iress
 # declare global variables
 tick_threshold = 1
 interval_threshold = 900
-inav_threshold = 100
+inav_threshold = 20
 thresholds = {
-    'bid tick': 1,
-    'ask tick': 1,
-    'inav diff': 100
+    'Bid Spread to iNAV (ticks)': tick_threshold,
+    'Ask Spread to iNAV (ticks)': tick_threshold,
+    'iNAV Diff (bps)': inav_threshold
 }
 
 ice_url = 'https://iml.factsetdigitalsolutions.com/application/index/quote?t=LSGE'
@@ -159,13 +158,12 @@ def update_etfs(n, last_interval):
     if last_interval is None:
         last_interval = 0
 
-    # for col, item in zip(['Bid Spread to iNAV (ticks)', 'Ask Spread to iNAV (ticks)', 'iNAV Diff(bps)'], thresholds.keys()):
-    for col in ['Bid Spread to iNAV (ticks)', 'Ask Spread to iNAV (ticks)']:
-        if (df[col] > thresholds['bid tick']).any():
+    for col in ['Bid Spread to iNAV (ticks)', 'Ask Spread to iNAV (ticks)', 'iNAV Diff (bps)']:
+        if (df[col] > thresholds[col]).any():
             if n - last_interval > interval_threshold:
                 last_interval = n
                 email_alert(df[df[col] > tick_threshold], col)
-                print(last_interval)
+                print(col, last_interval)
 
     print('table')
     return df.to_dict('records'), last_interval

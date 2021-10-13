@@ -1,7 +1,6 @@
 import win32com.client
 from win32com.client import VARIANT
 import pythoncom
-import threading
 
 
 class Iress:
@@ -72,4 +71,6 @@ if __name__ == '__main__':
     method = 'pricingquoteexget'
     fields = ['SecurityCode', 'BidPrice', 'AskPrice', 'LastPrice', 'MovementPercent', 'BidVolume', 'AskVolume']
     iressobj = Iress(method, fields, input_dict)
+    iressobj.set_inputs()
+    iressobj.execute()
     iressobj.retrieve_data()
