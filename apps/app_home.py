@@ -3,6 +3,7 @@ import dash_core_components as dcc
 import dash_html_components as html
 import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
 import pandas as pd
 import win32com
 from datetime import datetime
@@ -16,9 +17,9 @@ from iress import Iress
 
 
 # declare global variables
-tick_threshold = 1
 interval_threshold = 900
-inav_threshold = 20
+tick_threshold = 1
+inav_threshold = 10
 thresholds = {
     'Bid Spread to iNAV (ticks)': tick_threshold,
     'Ask Spread to iNAV (ticks)': tick_threshold,
@@ -42,8 +43,6 @@ inav_fields = ['SecurityCode', 'LastPrice']
 futures_fields = ['SecurityCode', 'MovementPercent']
 table_fields = ['SecurityCode', 'BidPrice', 'AskPrice', 'LastPrice', 'MovementPercent', 'ICE iNAV', 'Solactive iNAV',
              'iNAV Diff (bps)', 'Bid Spread to iNAV (ticks)', 'Ask Spread to iNAV (ticks)', 'SP500 Futures %']
-display_fields = ['Code', 'BidPrice', 'AskPrice', 'LastPrice', 'Movement %', 'ICE iNAV', 'Solactive iNAV',
-             'iNAV Diff (bps)', 'Bid Spread to iNAV (ticks)', 'Ask Spread to iNAV (ticks)']
 
 
 def serve_layout():
@@ -60,7 +59,11 @@ def serve_layout():
         # storage component to store last interval when tick threshold was exceeded
         dcc.Store(
             id='store',
-            data=0
+            data={
+                'Bid Spread to iNAV (ticks)': 0,
+                'Ask Spread to iNAV (ticks)': 0,
+                'iNAV Diff (bps)': 0
+            }
         ),
 
         # Top Banner
@@ -133,12 +136,15 @@ def serve_layout():
               Input('interval', 'n_intervals'),
               State('store', 'data'))
 def update_etfs(n, last_interval):
+    if last_interval is None:
+        raise PreventUpdate
+
     iress_obj = Iress(method, fields, input_dict)
     iress_obj.set_inputs()
     iress_obj.execute()
     data = iress_obj.retrieve_data()
     df = pd.DataFrame(data=data, columns=fields)
-    print(df)
+    # print(df)
 
     etf_filter = df['SecurityCode'].isin(etf_codes)
     df.loc[etf_filter, ['BidPrice', 'AskPrice', 'LastPrice']] = df.loc[etf_filter, ['BidPrice', 'AskPrice', 'LastPrice']].div(100)
@@ -153,26 +159,22 @@ def update_etfs(n, last_interval):
     df['Bid Spread to iNAV (ticks)'] = round((round(df['ICE iNAV'], 2) - df['BidPrice']) * 100, 0)
     df['Ask Spread to iNAV (ticks)'] = round((df['AskPrice'] - round(df['ICE iNAV'], 2)) * 100, 0)
     df = df[df['SecurityCode'].isin(etf_codes)][table_fields]
-    # df.columns = display_fields
-
-    if last_interval is None:
-        last_interval = 0
 
     for col in ['Bid Spread to iNAV (ticks)', 'Ask Spread to iNAV (ticks)', 'iNAV Diff (bps)']:
         if (df[col] > thresholds[col]).any():
-            if n - last_interval > interval_threshold:
-                last_interval = n
-                email_alert(df[df[col] > tick_threshold], col)
+            print(col, n - last_interval[col])
+            if n - last_interval[col] > interval_threshold:
+                last_interval[col] = n
+                email_alert(df[df[col] > thresholds[col]], col)
                 print(col, last_interval)
 
-    print('table')
     return df.to_dict('records'), last_interval
 
 
 def email_alert(data, alert_type):
     Outlook = win32com.client.Dispatch("Outlook.Application")
     objMail = Outlook.CreateItem(0)
-    objMail.To = 'jeremy.tang@iml.com.au'
+    objMail.To = 'jeremy.tang@iml.com.au; richard.rudenko@iml.com.au'
     objMail.Subject = alert_type + ' Alert: ' + datetime.now().strftime('%d-%b-%Y %H:%M:%S')
     html = 'IML ETF Dashboard: <br><a href=http://aud0100ck4:8085>http://aud0100ck4:8085</a><br><br>' + \
            data.to_html(index=False)
