@@ -17,20 +17,34 @@ from iress import Iress
 
 
 # declare global variables
-interval_threshold = 900
-tick_threshold = 1
-inav_threshold = 10
-thresholds = {
-    'Bid Spread to iNAV (ticks)': tick_threshold,
-    'Ask Spread to iNAV (ticks)': tick_threshold,
-    'iNAV Diff (bps)': inav_threshold
+intervals = {
+    'Bid Spread to iNAV (ticks)': 50,
+    'Ask Spread to iNAV (ticks)': 50,
+    'iNAV Diff (bps)': 50
 }
 
-ice_url = 'https://iml.factsetdigitalsolutions.com/application/index/quote?t=LSGE'
+tick_threshold_dict = {
+    'LSGE': 1,
+    'VNGS': 1
+}
+
+inav_threshold_dict = {
+    'LSGE': 100,
+    'VNGS': 100
+}
+
+thresholds = {
+    'Bid Spread to iNAV (ticks)': tick_threshold_dict,
+    'Ask Spread to iNAV (ticks)': tick_threshold_dict,
+    'iNAV Diff (bps)': inav_threshold_dict
+}
+
+ice_url = 'https://iml.ppe.factsetdigitalsolutions.com/application/index/quote?t=LSGE,VNGS'
 sol_url = 'https://clients.solactive.com/api/rest/v1/indices/4386924db2b1d848621a188a90a3a855/DE000SL0DQU2/performance'
-etf_codes = ['LSGE']
-codes = ['LSGE', 'LSGEAUDINAV', 'SPFUT']
-exchanges = ['AXW', 'ETF', 'ID']
+etf_codes = ['LSGE', 'VNGS']
+solactive_codes = ['LSGEAUDINAV', 'VNGSAUDINAV'] # change to VN solactive inav code when it goes live
+codes = ['LSGE', 'LSGEAUDINAV', 'SPFUT', 'VNGS', 'VNGSAUDINAV'] # change to VN solactive inav code when it goes live
+exchanges = ['AXW', 'ETF', 'ID', 'AXW', 'ETF']
 input_dict = {
     'SecurityCode': codes,
     'Exchange': exchanges,
@@ -52,17 +66,19 @@ def serve_layout():
         # interval component
         dcc.Interval(
             id='interval',
-            interval=1 * 1000,  # in milliseconds
+            interval=4 * 1000,  # in milliseconds
             n_intervals=0
         ),
 
         # storage component to store last interval when tick threshold was exceeded
         dcc.Store(
             id='store',
-            data={
-                'Bid Spread to iNAV (ticks)': 0,
-                'Ask Spread to iNAV (ticks)': 0,
-                'iNAV Diff (bps)': 0
+            data={etf: {
+                    'Bid Spread to iNAV (ticks)': 0,
+                    'Ask Spread to iNAV (ticks)': 0,
+                    'iNAV Diff (bps)': 0
+                }
+                for etf in etf_codes
             }
         ),
 
@@ -90,32 +106,41 @@ def serve_layout():
                     style_cell={
                         'textAlign': 'left',
                     },
-                    style_data_conditional=[
-                        {
-                            'if': {
-                                'filter_query': '{Bid Spread to iNAV (ticks)} > ' + str(tick_threshold),
-                                'column_id': 'Bid Spread to iNAV (ticks)'
-                            },
-                            'backgroundColor': 'tomato',
-                            'color': 'white'
-                        },
-                        {
-                            'if': {
-                                'filter_query': '{Ask Spread to iNAV (ticks)} > ' + str(tick_threshold),
-                                'column_id': 'Ask Spread to iNAV (ticks)'
-                            },
-                            'backgroundColor': 'tomato',
-                            'color': 'white'
-                        },
-                        {
-                            'if': {
-                                'filter_query': '{iNAV Diff (bps)} > ' + str(inav_threshold),
-                                'column_id': 'iNAV Diff (bps)'
-                            },
-                            'backgroundColor': 'tomato',
-                            'color': 'white'
-                        }
-                    ]
+                    style_data_conditional=(
+                        [
+                            {
+                                'if': {
+                                    'filter_query': '{Bid Spread to iNAV (ticks)} > ' + str(tick_threshold_dict[i]) + ' && {SecurityCode} = ' + i,
+                                    'column_id': 'Bid Spread to iNAV (ticks)'
+                                },
+                                'backgroundColor': 'tomato',
+                                'color': 'white'
+                            }
+                            for i in etf_codes
+                        ] +
+                        [
+                            {
+                                'if': {
+                                    'filter_query': '{Ask Spread to iNAV (ticks)} > ' + str(tick_threshold_dict[i]) + ' && {SecurityCode} = ' + i,
+                                    'column_id': 'Ask Spread to iNAV (ticks)'
+                                },
+                                'backgroundColor': 'tomato',
+                                'color': 'white'
+                            }
+                            for i in etf_codes
+                        ] +
+                        [
+                            {
+                                'if': {
+                                    'filter_query': '{iNAV Diff (bps)} > ' + str(inav_threshold_dict[i]) + ' && {SecurityCode} = ' + i,
+                                    'column_id': 'iNAV Diff (bps)'
+                                },
+                                'backgroundColor': 'tomato',
+                                'color': 'white'
+                            }
+                            for i in etf_codes
+                        ]
+                    )
                 )
             )
         ]),
@@ -151,22 +176,36 @@ def update_etfs(n, last_interval):
     df['MovementPercent'] = df['MovementPercent'].round(2)
     ice_res = requests.get(ice_url)
     ice_json_data = json.loads(ice_res.text)
-    ice_json_data = ice_json_data['quote']['etf'][0]
-    df['ICE iNAV'] = float(ice_json_data['inav'])
-    df['Solactive iNAV'] = df[df['SecurityCode'] == 'LSGEAUDINAV']['LastPrice'].values[0]
+    ice_json_data = ice_json_data['quote']['etf']
+    for index, (etf, sol_inav) in enumerate(zip(etf_codes, solactive_codes)):
+        df.loc[df['SecurityCode'] == etf, 'Solactive iNAV'] = df[df['SecurityCode'] == sol_inav]['LastPrice'].values[0]
+        if ice_json_data[index]['inav'] == '-':
+            df.loc[df['SecurityCode'] == etf, 'ICE iNAV'] = 0
+        else:
+            df.loc[df['SecurityCode'] == etf, 'ICE iNAV'] = float(ice_json_data[index]['inav'])
     df['SP500 Futures %'] = df[df['SecurityCode'] == 'SPFUT']['MovementPercent'].values[0]
     df['iNAV Diff (bps)'] = round(abs((df['ICE iNAV'] / df['Solactive iNAV'] - 1)*10000), 0)
     df['Bid Spread to iNAV (ticks)'] = round((round(df['ICE iNAV'], 2) - df['BidPrice']) * 100, 0)
     df['Ask Spread to iNAV (ticks)'] = round((df['AskPrice'] - round(df['ICE iNAV'], 2)) * 100, 0)
     df = df[df['SecurityCode'].isin(etf_codes)][table_fields]
 
+    '''recode this part for etf specific thresholds'''
     for col in ['Bid Spread to iNAV (ticks)', 'Ask Spread to iNAV (ticks)', 'iNAV Diff (bps)']:
-        if (df[col] > thresholds[col]).any():
-            print(col, n - last_interval[col])
-            if n - last_interval[col] > interval_threshold:
-                last_interval[col] = n
-                email_alert(df[df[col] > thresholds[col]], col)
-                print(col, last_interval)
+        for etf in etf_codes:
+            # print(etf, col, n, last_interval[etf][col])
+            df_etf = df[df['SecurityCode'] == etf]
+            if (df_etf[col] > thresholds[col][etf]).any():
+                print(etf, col, n, last_interval[etf][col])
+                if last_interval[etf][col] <= n:
+                    last_interval[etf][col] = n
+                    if last_interval[etf][col] % intervals[col] == 0 and last_interval[etf][col] != 0 and n != 0:
+                        print('email alert')
+                        email_alert(df_etf[df_etf[col] > thresholds[col][etf]], col)
+
+                else:
+                    last_interval[etf][col] = 0
+
+    del iress_obj
 
     return df.to_dict('records'), last_interval
 
@@ -175,6 +214,7 @@ def email_alert(data, alert_type):
     Outlook = win32com.client.Dispatch("Outlook.Application")
     objMail = Outlook.CreateItem(0)
     objMail.To = 'jeremy.tang@iml.com.au; richard.rudenko@iml.com.au'
+    # objMail.To = 'jeremy.tang@iml.com.au;'
     objMail.Subject = alert_type + ' Alert: ' + datetime.now().strftime('%d-%b-%Y %H:%M:%S')
     html = 'IML ETF Dashboard: <br><a href=http://aud0100ck4:8085>http://aud0100ck4:8085</a><br><br>' + \
            data.to_html(index=False)
